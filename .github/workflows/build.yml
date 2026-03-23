@@ -69,38 +69,47 @@ jobs:
           OUTPUT_PATH="$SOURCE_DIR/build/artifacts"
           rm -rf "$OUTPUT_PATH"
           mkdir -p "$OUTPUT_PATH"
-
-          echo "=== Searching IPA in all locations ==="
-          find "$SOURCE_DIR" "$BAZEL_USER_ROOT" /private/var/tmp \
-            -name "*.ipa" 2>/dev/null | head -n 20
-
-          echo "=== Searching .app in all locations ==="
-          find "$SOURCE_DIR" "$BAZEL_USER_ROOT" \
-            -type d -name "Telegram.app" 2>/dev/null | head -n 20
-
+          
+          echo "=== Searching IPA ==="
           IPA_FILE=$(find "$SOURCE_DIR" "$BAZEL_USER_ROOT" /private/var/tmp \
             -name "*.ipa" 2>/dev/null | head -n 1)
-
+          
+          echo "=== Searching APP ==="
+          APP_PATH=$(find "$SOURCE_DIR" "$BAZEL_USER_ROOT" \
+            -type d -name "Telegram.app" 2>/dev/null | head -n 1)
+          
           if [ -n "$IPA_FILE" ]; then
             echo "IPA found: $IPA_FILE"
             cp "$IPA_FILE" "$OUTPUT_PATH/Telegram.ipa"
-          else
-            APP_PATH=$(find "$SOURCE_DIR" "$BAZEL_USER_ROOT" \
-              -type d -name "Telegram.app" 2>/dev/null | head -n 1)
-            if [ -z "$APP_PATH" ]; then
-              echo "ERROR: Neither .ipa nor Telegram.app found"
-              exit 1
-            fi
-            echo "App found: $APP_PATH"
-            PAYLOAD_DIR="$(mktemp -d)/Payload"
-            mkdir -p "$PAYLOAD_DIR"
-            cp -R "$APP_PATH" "$PAYLOAD_DIR/"
-            cd "$(dirname "$PAYLOAD_DIR")"
-            zip -r "$OUTPUT_PATH/Telegram.ipa" Payload
           fi
-
+          
+          if [ -n "$APP_PATH" ]; then
+            echo "APP found: $APP_PATH"
+            cp -R "$APP_PATH" "$OUTPUT_PATH/Telegram.app"
+          
+            if [ ! -f "$OUTPUT_PATH/Telegram.ipa" ]; then
+              echo "Creating IPA from .app"
+              PAYLOAD_DIR="$(mktemp -d)/Payload"
+              mkdir -p "$PAYLOAD_DIR"
+              cp -R "$APP_PATH" "$PAYLOAD_DIR/"
+              cd "$(dirname "$PAYLOAD_DIR")"
+              zip -r "$OUTPUT_PATH/Telegram.ipa" Payload
+            fi
+          fi
+          
+          if [ ! -f "$OUTPUT_PATH/Telegram.ipa" ]; then
+            echo "ERROR: Nothing built"
+            exit 1
+          fi
+          
           echo "=== Result ==="
           ls -lh "$OUTPUT_PATH"
+
+          echo "Zipping .app"
+          if [ -d "$OUTPUT_PATH/Telegram.app" ]; then
+            cd "$OUTPUT_PATH"
+            zip -r Telegram.app.zip Telegram.app
+          fi
 
       - name: Create GitHub Release and upload IPA
         uses: softprops/action-gh-release@v2
@@ -112,4 +121,6 @@ jobs:
             App version: ${{ env.APP_VERSION }}
           draft: false
           prerelease: false
-          files: /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
+          files: |
+            /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
+            /Users/Shared/telegram-ios/build/artifacts/Telegram.app.zip
