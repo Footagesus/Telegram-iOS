@@ -32,12 +32,8 @@ jobs:
         run: |
           set -x
 
-          # source code paths are included in the final binary, so we need to make them stable across builds
           SOURCE_DIR=/Users/Shared/telegram-ios
-
-          # use canonical bazel root
           BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
-
           cd $SOURCE_DIR
 
           BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
@@ -58,19 +54,22 @@ jobs:
             --configuration=release_arm64 \
             --buildNumber="$BUILD_NUMBER"
 
-          # collect ipa
+          # collect ipa safely
           OUTPUT_PATH="build/artifacts"
           rm -rf "$OUTPUT_PATH"
           mkdir -p "$OUTPUT_PATH"
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/Telegram.ipa; do
-            cp "$f" $OUTPUT_PATH/
-          done
+          IPA_FILE=$(find bazel-out -type f -name "Telegram.ipa" | head -n 1)
+          if [ -f "$IPA_FILE" ]; then
+            cp "$IPA_FILE" "$OUTPUT_PATH/"
+            echo "IPA copied to $OUTPUT_PATH"
+          else
+            echo "Error: Telegram.ipa not found!"
+            exit 1
+          fi
 
           # collect dsym
           mkdir -p build/DSYMs
-          for f in bazel-out/applebin_ios-ios_arm*-opt-ST-*/bin/Telegram/*.dSYM; do
-            cp -R "$f" build/DSYMs/
-          done
+          find bazel-out -name "*.dSYM" -exec cp -R {} build/DSYMs/ \;
           zip -r "./$OUTPUT_PATH/Telegram.DSYMs.zip" build/DSYMs 1>/dev/null
 
       - name: Create Release
