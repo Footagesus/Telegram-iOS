@@ -22,14 +22,12 @@ jobs:
 
       - name: Create canonical source directory
         run: |
-          set -x
           sudo mkdir -p /Users/Shared
           cp -R $GITHUB_WORKSPACE /Users/Shared/
           mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
 
-      - name: Build the App with Bazel
+      - name: Build
         run: |
-          set -x
           SOURCE_DIR=/Users/Shared/telegram-ios
           BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
           cd $SOURCE_DIR
@@ -39,10 +37,12 @@ jobs:
           export COMMIT_COUNT=$(git rev-list --count HEAD)
           export COMMIT_COUNT="$(($COMMIT_COUNT+$BUILD_NUMBER_OFFSET))"
           export BUILD_NUMBER="$COMMIT_COUNT"
-          echo "BUILD_NUMBER=$(echo $BUILD_NUMBER)" >> $GITHUB_ENV
-          echo "APP_VERSION=$(echo $APP_VERSION)" >> $GITHUB_ENV
+
+          echo "BUILD_NUMBER=$BUILD_NUMBER" >> $GITHUB_ENV
+          echo "APP_VERSION=$APP_VERSION" >> $GITHUB_ENV
 
           python3 build-system/Make/ImportCertificates.py --path build-system/fake-codesigning/certs
+
           python3 -u build-system/Make/Make.py \
             --bazelUserRoot="$BAZEL_USER_ROOT" \
             build \
@@ -51,35 +51,40 @@ jobs:
             --configuration=release_arm64 \
             --buildNumber="$BUILD_NUMBER"
 
-      - name: Export IPA from .app
+      - name: Find and prepare IPA
         run: |
           SOURCE_DIR=/Users/Shared/telegram-ios
-          APP_PATH=$(find $SOURCE_DIR/bazel-out -type d -name "Telegram.app" | head -n 1)
-          if [ -z "$APP_PATH" ]; then
-            echo "Error: Telegram.app not found!"
-            exit 1
-          fi
+          cd $SOURCE_DIR
+
+          echo "=== SEARCHING FILES ==="
+          find . -name "*.ipa" | head -n 10
+          find . -name "*.app" | head -n 10
 
           OUTPUT_PATH="$SOURCE_DIR/build/artifacts"
           rm -rf "$OUTPUT_PATH"
           mkdir -p "$OUTPUT_PATH"
 
-          xcodebuild -exportArchive \
-            -archivePath "$APP_PATH" \
-            -exportOptionsPlist "$SOURCE_DIR/build-system/appstore-configuration.json" \
-            -exportPath "$OUTPUT_PATH"
+          IPA_FILE=$(find . -name "*.ipa" | head -n 1)
 
-          if [ ! -f "$OUTPUT_PATH/Telegram.ipa" ]; then
-            echo "Error: IPA export failed!"
+          if [ -n "$IPA_FILE" ]; then
+            echo "IPA FOUND: $IPA_FILE"
+            cp "$IPA_FILE" "$OUTPUT_PATH/Telegram.ipa"
+            exit 0
+          fi
+
+          APP_PATH=$(find . -type d -name "Telegram.app" | head -n 1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: NOTHING FOUND"
             exit 1
           fi
 
-      - name: Collect DSYMs
-        run: |
-          SOURCE_DIR=/Users/Shared/telegram-ios
-          mkdir -p $SOURCE_DIR/build/DSYMs
-          find $SOURCE_DIR/bazel-out -name "*.dSYM" -exec cp -R {} $SOURCE_DIR/build/DSYMs/ \;
-          zip -r "$SOURCE_DIR/build/artifacts/Telegram.DSYMs.zip" $SOURCE_DIR/build/DSYMs 1>/dev/null
+          echo "APP FOUND: $APP_PATH"
+
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          cd Payload/..
+          zip -r "$OUTPUT_PATH/Telegram.ipa" Payload
 
       - name: Create Release
         id: create_release
@@ -89,13 +94,11 @@ jobs:
         with:
           tag_name: build-${{ env.BUILD_NUMBER }}
           release_name: Telegram ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
-          body: |
-            An unsigned build of Telegram for iOS ${{ env.APP_VERSION }} (${{ env.BUILD_NUMBER }})
+          body: Build
           draft: false
           prerelease: false
 
-      - name: Upload Release IPA
-        id: upload-release-ipa 
+      - name: Upload IPA
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -103,15 +106,4 @@ jobs:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
           asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.ipa
           asset_name: Telegram.ipa
-          asset_content_type: application/zip
-
-      - name: Upload Release DSYM
-        id: upload-release-dsym 
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: /Users/Shared/telegram-ios/build/artifacts/Telegram.DSYMs.zip
-          asset_name: Telegram.DSYMs.zip
-          asset_content_type: application/zip
+          asset_content_type: application/octet-stream
