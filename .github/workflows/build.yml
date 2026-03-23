@@ -3,7 +3,6 @@ name: CI
 on:
   push:
     branches: [ master ]
-
   workflow_dispatch:
 
 jobs:
@@ -28,16 +27,14 @@ jobs:
           cp -R $GITHUB_WORKSPACE /Users/Shared/
           mv /Users/Shared/$(basename $GITHUB_WORKSPACE) /Users/Shared/telegram-ios
 
-      - name: Build the App
+      - name: Build the App with Bazel
         run: |
           set -x
-
           SOURCE_DIR=/Users/Shared/telegram-ios
           BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
           cd $SOURCE_DIR
 
           BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
-
           export APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);')
           export COMMIT_COUNT=$(git rev-list --count HEAD)
           export COMMIT_COUNT="$(($COMMIT_COUNT+$BUILD_NUMBER_OFFSET))"
@@ -54,23 +51,35 @@ jobs:
             --configuration=release_arm64 \
             --buildNumber="$BUILD_NUMBER"
 
-          # collect ipa safely
-          OUTPUT_PATH="build/artifacts"
-          rm -rf "$OUTPUT_PATH"
-          mkdir -p "$OUTPUT_PATH"
-          IPA_FILE=$(find bazel-out -type f -name "Telegram.ipa" | head -n 1)
-          if [ -f "$IPA_FILE" ]; then
-            cp "$IPA_FILE" "$OUTPUT_PATH/"
-            echo "IPA copied to $OUTPUT_PATH"
-          else
-            echo "Error: Telegram.ipa not found!"
+      - name: Export IPA from .app
+        run: |
+          SOURCE_DIR=/Users/Shared/telegram-ios
+          APP_PATH=$(find $SOURCE_DIR/bazel-out -type d -name "Telegram.app" | head -n 1)
+          if [ -z "$APP_PATH" ]; then
+            echo "Error: Telegram.app not found!"
             exit 1
           fi
 
-          # collect dsym
-          mkdir -p build/DSYMs
-          find bazel-out -name "*.dSYM" -exec cp -R {} build/DSYMs/ \;
-          zip -r "./$OUTPUT_PATH/Telegram.DSYMs.zip" build/DSYMs 1>/dev/null
+          OUTPUT_PATH="$SOURCE_DIR/build/artifacts"
+          rm -rf "$OUTPUT_PATH"
+          mkdir -p "$OUTPUT_PATH"
+
+          xcodebuild -exportArchive \
+            -archivePath "$APP_PATH" \
+            -exportOptionsPlist "$SOURCE_DIR/build-system/appstore-configuration.json" \
+            -exportPath "$OUTPUT_PATH"
+
+          if [ ! -f "$OUTPUT_PATH/Telegram.ipa" ]; then
+            echo "Error: IPA export failed!"
+            exit 1
+          fi
+
+      - name: Collect DSYMs
+        run: |
+          SOURCE_DIR=/Users/Shared/telegram-ios
+          mkdir -p $SOURCE_DIR/build/DSYMs
+          find $SOURCE_DIR/bazel-out -name "*.dSYM" -exec cp -R {} $SOURCE_DIR/build/DSYMs/ \;
+          zip -r "$SOURCE_DIR/build/artifacts/Telegram.DSYMs.zip" $SOURCE_DIR/build/DSYMs 1>/dev/null
 
       - name: Create Release
         id: create_release
