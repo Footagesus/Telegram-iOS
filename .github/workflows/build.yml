@@ -11,6 +11,7 @@ permissions:
 jobs:
   build:
     runs-on: macos-14
+    timeout-minutes: 120
 
     steps:
       - uses: actions/checkout@v4
@@ -20,19 +21,9 @@ jobs:
 
       - name: Set active Xcode path
         run: |
-          XCODE_VERSION=$(python3 -c 'import json; print(json.load(open("versions.json"))["xcode"])')
-          XCODE_PATH="/Applications/Xcode_${XCODE_VERSION}.app/Contents/Developer"
+          XCODE_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["xcode"]);')
+          sudo xcode-select -s /Applications/Xcode_$XCODE_VERSION.app/Contents/Developer
 
-          if [ -d "$XCODE_PATH" ]; then
-            sudo xcode-select -s "$XCODE_PATH"
-          else
-            echo "Warning: Xcode $XCODE_VERSION not found, using default"
-            echo "Available Xcode versions:"
-            ls /Applications/ | grep Xcode
-          fi
-
-          xcodebuild -version
-          
       - name: Create canonical source directory
         run: |
           sudo mkdir -p /Users/Shared
@@ -53,7 +44,7 @@ jobs:
           cd "$SOURCE_DIR"
 
           BUILD_NUMBER_OFFSET="$(cat build_number_offset)"
-          APP_VERSION=$(python3 -c 'import json; print(json.load(open("versions.json"))["app"])')
+          APP_VERSION=$(cat versions.json | python3 -c 'import json,sys;obj=json.load(sys.stdin);print(obj["app"]);')
           COMMIT_COUNT=$(git rev-list --count HEAD)
           BUILD_NUMBER=$(( COMMIT_COUNT + BUILD_NUMBER_OFFSET ))
 
@@ -74,21 +65,28 @@ jobs:
       - name: Find and prepare IPA
         run: |
           SOURCE_DIR=/Users/Shared/telegram-ios
+          BAZEL_USER_ROOT="/private/var/tmp/_bazel_containerhost"
           OUTPUT_PATH="$SOURCE_DIR/build/artifacts"
           rm -rf "$OUTPUT_PATH"
           mkdir -p "$OUTPUT_PATH"
 
-          cd "$SOURCE_DIR"
-          echo "=== Searching for IPA ==="
-          find . -name "*.ipa" | head -n 10
+          echo "=== Searching IPA in all locations ==="
+          find "$SOURCE_DIR" "$BAZEL_USER_ROOT" /private/var/tmp \
+            -name "*.ipa" 2>/dev/null | head -n 20
 
-          IPA_FILE=$(find . -name "*.ipa" | head -n 1)
+          echo "=== Searching .app in all locations ==="
+          find "$SOURCE_DIR" "$BAZEL_USER_ROOT" \
+            -type d -name "Telegram.app" 2>/dev/null | head -n 20
+
+          IPA_FILE=$(find "$SOURCE_DIR" "$BAZEL_USER_ROOT" /private/var/tmp \
+            -name "*.ipa" 2>/dev/null | head -n 1)
+
           if [ -n "$IPA_FILE" ]; then
             echo "IPA found: $IPA_FILE"
             cp "$IPA_FILE" "$OUTPUT_PATH/Telegram.ipa"
           else
-            echo "No IPA found, packaging .app manually..."
-            APP_PATH=$(find . -type d -name "Telegram.app" | head -n 1)
+            APP_PATH=$(find "$SOURCE_DIR" "$BAZEL_USER_ROOT" \
+              -type d -name "Telegram.app" 2>/dev/null | head -n 1)
             if [ -z "$APP_PATH" ]; then
               echo "ERROR: Neither .ipa nor Telegram.app found"
               exit 1
