@@ -59,7 +59,7 @@ jobs:
             build \
             --configurationPath="build-system/appstore-configuration.json" \
             --codesigningInformationPath=build-system/fake-codesigning \
-            --configuration=arm64-simulator \
+            --configuration=release_sim_arm64 \
             --buildNumber="$BUILD_NUMBER"
 
       - name: Find and prepare IPA
